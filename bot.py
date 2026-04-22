@@ -1,63 +1,65 @@
-import os
 import re
-import requests
-import instaloader
+import os
+import asyncio
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 
-BOT_TOKEN = os.getenv("8757705485:AAGC2YKFu7QO40vRWnqRndBZI3sZsRq8_Aw")
+from downloader import get_video_url, load_session
+from rate_limiter import is_allowed
+from cache import get_cache_path, is_cached
+from worker import queue, worker
 
-L = instaloader.Instaloader(
-    download_pictures=False,
-    download_comments=False,
-    save_metadata=False
-)
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 def extract_shortcode(url):
     match = re.search(r"(?:reel|p|tv)/([^/?&]+)", url)
     return match.group(1) if match else None
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     text = update.message.text
 
+    if not is_allowed(user_id):
+        await update.message.reply_text("⏳ Slow down a bit!")
+        return
+
     if "instagram.com" not in text:
-        await update.message.reply_text("❌ Send a valid Instagram link.")
+        await update.message.reply_text("❌ Send valid Instagram link")
         return
 
     shortcode = extract_shortcode(text)
 
     if not shortcode:
-        await update.message.reply_text("❌ Invalid Instagram URL.")
+        await update.message.reply_text("❌ Invalid URL")
         return
 
-    await update.message.reply_text("⬇️ Downloading... Please wait")
+    await update.message.reply_text("⬇️ Processing...")
 
-    try:
-        post = instaloader.Post.from_shortcode(L.context, shortcode)
+    video_url = get_video_url(shortcode, text)
 
-        if not post.is_video:
-            await update.message.reply_text("⚠️ This post is not a video.")
-            return
+    if not video_url:
+        await update.message.reply_text("⚠️ Failed to fetch video")
+        return
 
-        video_url = post.video_url
+    file_path = get_cache_path(video_url)
 
-        file_name = f"{shortcode}.mp4"
+    if not is_cached(video_url):
+        await queue.put((video_url, file_path))
+        await asyncio.sleep(2)
 
-        r = requests.get(video_url, stream=True, timeout=10)
+    await update.message.reply_video(video=open(file_path, "rb"))
 
-        with open(file_name, "wb") as f:
-            for chunk in r.iter_content(1024):
-                f.write(chunk)
+async def main():
+    load_session()
 
-        await update.message.reply_video(video=open(file_name, "rb"))
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app.add_handler(MessageHandler(filters.TEXT, handle))
 
-        os.remove(file_name)
+    asyncio.create_task(worker())
 
-    except Exception as e:
-        await update.message.reply_text(f"⚠️ Failed: {str(e)}")
+    print("🚀 Advanced bot running...")
+    await app.run_polling()
 
-app = ApplicationBuilder().token(BOT_TOKEN).build()
-app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
-
-print("🚀 Bot is running...")
-app.run_polling()
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
