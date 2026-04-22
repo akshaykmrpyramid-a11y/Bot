@@ -9,7 +9,7 @@ from rate_limiter import is_allowed
 from cache import get_cache_path, is_cached
 from worker import queue, worker
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = os.getenv("8757705485:AAGC2YKFu7QO40vRWnqRndBZI3sZsRq8_Aw")
 
 def extract_shortcode(url):
     match = re.search(r"(?:reel|p|tv)/([^/?&]+)", url)
